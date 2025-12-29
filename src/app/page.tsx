@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import axios from "axios";
 
 /* ===================== Types ===================== */
 
@@ -11,6 +12,7 @@ type SurveyorMeta = {
   name: string;
   region: string;
   state: string;
+  avatarUrl: string;
 };
 
 type DayRow = {
@@ -98,96 +100,7 @@ const MALAYSIA_STATES = [
   "Labuan",
 ] as const;
 
-const SURVEYORS: SurveyorMeta[] = [
-  { name: "John Mitchell", region: "Central", state: "Selangor" },
-  { name: "Sarah Williams", region: "Northern", state: "Pulau Pinang" },
-  { name: "Michael Chen", region: "Southern", state: "Johor" },
-  { name: "Emily Rodriguez", region: "East Coast", state: "Pahang" },
-  { name: "David Thompson", region: "East Malaysia", state: "Sabah" },
-  { name: "Lisa Anderson", region: "Central", state: "Kuala Lumpur" },
-];
-
-const INITIAL_DAY_DATA: DayRow[] = [
-  {
-    name: "John Mitchell",
-    slots: {
-      "9:00 AM": "available",
-      "10:00 AM": "available",
-      "11:00 AM": "booked",
-      "12:00 PM": "unavailable",
-      "1:00 PM": "available",
-      "2:00 PM": "booked",
-      "3:00 PM": "booked",
-      "4:00 PM": "available",
-    },
-  },
-  {
-    name: "Sarah Williams",
-    slots: {
-      "9:00 AM": "unavailable",
-      "10:00 AM": "available",
-      "11:00 AM": "available",
-      "12:00 PM": "available",
-      "1:00 PM": "booked",
-      "2:00 PM": "booked",
-      "3:00 PM": "booked",
-      "4:00 PM": "available",
-    },
-  },
-  {
-    name: "Michael Chen",
-    slots: {
-      "9:00 AM": "available",
-      "10:00 AM": "booked",
-      "11:00 AM": "booked",
-      "12:00 PM": "available",
-      "1:00 PM": "available",
-      "2:00 PM": "available",
-      "3:00 PM": "available",
-      "4:00 PM": "unavailable",
-    },
-  },
-  {
-    name: "Emily Rodriguez",
-    slots: {
-      "9:00 AM": "available",
-      "10:00 AM": "available",
-      "11:00 AM": "available",
-      "12:00 PM": "unavailable",
-      "1:00 PM": "unavailable",
-      "2:00 PM": "available",
-      "3:00 PM": "booked",
-      "4:00 PM": "booked",
-    },
-  },
-  {
-    name: "David Thompson",
-    slots: {
-      "9:00 AM": "booked",
-      "10:00 AM": "available",
-      "11:00 AM": "available",
-      "12:00 PM": "available",
-      "1:00 PM": "available",
-      "2:00 PM": "available",
-      "3:00 PM": "unavailable",
-      "4:00 PM": "unavailable",
-    },
-  },
-  {
-    name: "Lisa Anderson",
-    slots: {
-      "9:00 AM": "available",
-      "10:00 AM": "available",
-      "11:00 AM": "booked",
-      "12:00 PM": "booked",
-      "1:00 PM": "booked",
-      "2:00 PM": "available",
-      "3:00 PM": "available",
-      "4:00 PM": "available",
-    },
-  },
-];
-
+// Week (UI demo macam sebelum)
 const WEEK_DATA: WeekRow[] = [
   {
     name: "John Anderson",
@@ -245,7 +158,6 @@ const WEEK_DATA: WeekRow[] = [
 
 const MONTH_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-// Dots demo for Dec 2024 (as before)
 const DOTS_DEC_2024: Record<string, MonthDot[]> = {
   "2024-12-01": ["green", "green"],
   "2024-12-02": ["orange", "red"],
@@ -847,8 +759,10 @@ function SurveyDetailsModal({
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-4">
-            <div className="h-14 w-14 rounded-full bg-white border flex items-center justify-center font-bold text-slate-700">
-              {initials(booking.surveyorName)}
+            <div className="h-14 w-14 rounded-full bg-white border overflow-hidden flex items-center justify-center font-bold text-slate-700">
+              {booking.surveyorName
+                ? initials(booking.surveyorName)
+                : "SC"}
             </div>
             <div>
               <div className="font-semibold text-slate-900">
@@ -881,13 +795,31 @@ function SurveyDetailsModal({
 
 /* ===================== Page ===================== */
 
+type RandomUserResponse = {
+  results: Array<{
+    name: { first: string; last: string };
+    picture: { thumbnail: string; medium: string; large: string };
+  }>;
+};
+
 export default function Home() {
   const [view, setView] = useState<View>("day");
 
-  // Day navigation (prev/next)
+  // Loading API data
+  const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  const [surveyors, setSurveyors] = useState<SurveyorMeta[]>([]);
+  const [dayData, setDayData] = useState<DayRow[]>([]);
+  const [bookings, setBookings] = useState<Record<string, Booking>>({});
+
+  // Day navigation
   const [dayOffset, setDayOffset] = useState(0);
   const BASE_DAY = useMemo(() => new Date(), []);
-  const dayCursor = useMemo(() => addDays(BASE_DAY, dayOffset), [BASE_DAY, dayOffset]);
+  const dayCursor = useMemo(
+    () => addDays(BASE_DAY, dayOffset),
+    [BASE_DAY, dayOffset]
+  );
   const dayTitle = useMemo(
     () =>
       dayCursor.toLocaleString("en-US", {
@@ -899,11 +831,11 @@ export default function Home() {
     [dayCursor]
   );
 
-  // Week / Month offsets (date-accurate header)
+  // Week / Month offsets
   const [weekOffset, setWeekOffset] = useState(0);
   const [monthOffset, setMonthOffset] = useState(0);
-  const BASE_WEEK_START = useMemo(() => new Date(2024, 11, 16), []); // Dec 16, 2024
-  const BASE_MONTH = useMemo(() => new Date(2024, 11, 1), []); // Dec 2024
+  const BASE_WEEK_START = useMemo(() => new Date(2024, 11, 16), []);
+  const BASE_MONTH = useMemo(() => new Date(2024, 11, 1), []);
   const [selectedISO, setSelectedISO] = useState<string>("2024-12-24");
 
   const weekStart = useMemo(
@@ -932,23 +864,31 @@ export default function Home() {
     });
   }, [weekStart]);
 
-  // Day data
-  const [dayData, setDayData] = useState<DayRow[]>(INITIAL_DAY_DATA);
-
-  // Filters (draft + applied)
+  // Filters
   const [filterDraft, setFilterDraft] = useState({
     region: "All Regions",
     state: "All States",
     status: "All Status",
     surveyor: "",
   });
-
   const [filterApplied, setFilterApplied] = useState({
     region: "All Regions",
     state: "All States",
     status: "All Status",
     surveyor: "",
   });
+
+  const stateOptions = useMemo(() => {
+    const region = filterDraft.region;
+    if (region === "All Regions") return Array.from(MALAYSIA_STATES);
+    if (region === "Central")
+      return ["Selangor", "Kuala Lumpur", "Putrajaya", "Negeri Sembilan"];
+    if (region === "Northern") return ["Pulau Pinang", "Perak", "Kedah", "Perlis"];
+    if (region === "Southern") return ["Johor", "Melaka"];
+    if (region === "East Coast") return ["Kelantan", "Terengganu", "Pahang"];
+    if (region === "East Malaysia") return ["Sabah", "Sarawak", "Labuan"];
+    return Array.from(MALAYSIA_STATES);
+  }, [filterDraft.region]);
 
   const resetFilters = () => {
     const reset = {
@@ -960,22 +900,10 @@ export default function Home() {
     setFilterDraft(reset);
     setFilterApplied(reset);
   };
-
   const applyFilters = () => setFilterApplied(filterDraft);
 
-  const stateOptions = useMemo(() => {
-    const region = filterDraft.region;
-    if (region === "All Regions") return Array.from(MALAYSIA_STATES);
-    if (region === "Central") return ["Selangor", "Kuala Lumpur", "Putrajaya", "Negeri Sembilan"];
-    if (region === "Northern") return ["Pulau Pinang", "Perak", "Kedah", "Perlis"];
-    if (region === "Southern") return ["Johor", "Melaka"];
-    if (region === "East Coast") return ["Kelantan", "Terengganu", "Pahang"];
-    if (region === "East Malaysia") return ["Sabah", "Sarawak", "Labuan"];
-    return Array.from(MALAYSIA_STATES);
-  }, [filterDraft.region]);
-
   const filteredRows = useMemo(() => {
-    const byMeta = (name: string) => SURVEYORS.find((s) => s.name === name);
+    const byMeta = (name: string) => surveyors.find((s) => s.name === name);
 
     const surveyorQ = filterApplied.surveyor.trim().toLowerCase();
     const region = filterApplied.region;
@@ -997,53 +925,28 @@ export default function Home() {
             ? "booked"
             : "unavailable";
 
-        const anyMatch = DAY_TIMES.some((t) => (row.slots[t] ?? "unavailable") === wanted);
+        const anyMatch = DAY_TIMES.some(
+          (t) => (row.slots[t] ?? "unavailable") === wanted
+        );
         if (!anyMatch) return false;
       }
 
       return true;
     });
-  }, [dayData, filterApplied]);
+  }, [dayData, filterApplied, surveyors]);
 
-  // bookings seeded from initial booked slots
-  const [bookings, setBookings] = useState<Record<string, Booking>>(() => {
-    const seeded: Record<string, Booking> = {};
-    for (const row of INITIAL_DAY_DATA) {
-      for (const t of Object.keys(row.slots)) {
-        if (row.slots[t] === "booked") {
-          seeded[slotKey(row.name, t)] = {
-            id: cryptoSafeId(),
-            surveyorName: row.name,
-            region: "North Region",
-            state: "Delhi NCR",
-            surveyDate: "March 26, 2024",
-            startTime: t,
-            endTime: nextHour(t),
-            projectSiteName: "Green Valley Residential Complex",
-            surveyType: "Site Assessment",
-            bdRemarks: "High priority client",
-            status: "Confirmed",
-            customerName: "Skyline Developers Ltd.",
-            contactNumber: "+91 98765 43210",
-          };
-        }
-      }
-    }
-    return seeded;
-  });
-
-  // modals state
+  // Modals
   const [bookOpen, setBookOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selected, setSelected] = useState<{ surveyorName: string; time: string } | null>(null);
 
   const [bookingDraft, setBookingDraft] = useState<BookingDraft>({
     projectSiteName: "",
-    surveyorName: "John Smith",
-    region: "Central",
-    state: "Selangor",
+    surveyorName: "",
+    region: "",
+    state: "",
     surveyDate: fmtFullDate(new Date()),
-    timeSlot: "10:00 AM - 11:00 AM",
+    timeSlot: "",
     surveyType: "",
     bdRemarks: "",
   });
@@ -1053,23 +956,91 @@ export default function Home() {
     return bookings[slotKey(selected.surveyorName, selected.time)] ?? null;
   }, [bookings, selected]);
 
-  // --- click behaviors (KEEP same) ---
+  /* ===================== FETCH API (AXIOS) ===================== */
+  useEffect(() => {
+    let mounted = true;
+
+    async function run() {
+      try {
+        setLoading(true);
+        setApiError(null);
+
+        const res = await axios.get<RandomUserResponse>(
+          "https://randomuser.me/api/?results=6"
+        );
+
+        if (!mounted) return;
+
+        const mappedSurveyors: SurveyorMeta[] = res.data.results.map((u) => ({
+          name: `${u.name.first} ${u.name.last}`,
+          region: pick(MALAYSIA_REGIONS),
+          state: pick(MALAYSIA_STATES),
+          avatarUrl: u.picture.thumbnail,
+        }));
+
+        const mappedDay: DayRow[] = mappedSurveyors.map((s) => ({
+          name: s.name,
+          slots: generateSlots(DAY_TIMES),
+        }));
+
+        // Seed bookings for any booked slots so "Booked" click shows details
+        const seededBookings: Record<string, Booking> = {};
+        for (const row of mappedDay) {
+          for (const t of DAY_TIMES) {
+            if ((row.slots[t] ?? "unavailable") === "booked") {
+              const meta = mappedSurveyors.find((x) => x.name === row.name);
+              seededBookings[slotKey(row.name, t)] = {
+                id: cryptoSafeId(),
+                surveyorName: row.name,
+                region: meta?.region ?? "Central",
+                state: meta?.state ?? "Selangor",
+                surveyDate: fmtFullDate(new Date()),
+                startTime: t,
+                endTime: nextHour(t),
+                projectSiteName: "Green Valley Residential Complex",
+                surveyType: "Site Assessment",
+                bdRemarks: "High priority client",
+                status: "Confirmed",
+                customerName: "Skyline Developers Ltd.",
+                contactNumber: "+91 98765 43210",
+              };
+            }
+          }
+        }
+
+        setSurveyors(mappedSurveyors);
+        setDayData(mappedDay);
+        setBookings(seededBookings);
+
+        setLoading(false);
+      } catch (e: any) {
+        setLoading(false);
+        setApiError(e?.message ?? "Failed to fetch API data");
+      }
+    }
+
+    run();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  /* ===================== Click behaviors (KEEP SAME) ===================== */
+
   const openBook = (surveyorName: string, time: string) => {
-    const meta = SURVEYORS.find((s) => s.name === surveyorName);
+    const meta = surveyors.find((s) => s.name === surveyorName);
     setSelected({ surveyorName, time });
 
-    setBookingDraft((d) => ({
-      ...d,
+    setBookingDraft({
       projectSiteName: "",
       surveyType: "",
       bdRemarks: "",
       surveyorName,
       region: meta?.region ?? "Central",
       state: meta?.state ?? "Selangor",
-      // keep current day title date for demo
-      surveyDate: d.surveyDate || fmtFullDate(new Date()),
+      surveyDate: fmtFullDate(dayCursor),
       timeSlot: `${time} - ${nextHour(time)}`,
-    }));
+    });
 
     setBookOpen(true);
   };
@@ -1181,7 +1152,6 @@ export default function Home() {
 
   const goToday = () => {
     setDayOffset(0);
-    // optional: reset selectedISO to today for month highlight
     const iso = toISODate(new Date());
     setSelectedISO(iso);
   };
@@ -1367,7 +1337,11 @@ export default function Home() {
 
             {/* Content */}
             <div className="px-6 pb-6 pt-5">
-              {view === "day" ? (
+              {loading ? (
+                <div className="p-10 text-slate-500">Loading data from API...</div>
+              ) : apiError ? (
+                <div className="p-10 text-rose-600">Error: {apiError}</div>
+              ) : view === "day" ? (
                 <DayView
                   data={filteredRows}
                   onClickAvailable={(surveyorName, time) => openBook(surveyorName, time)}
@@ -1384,11 +1358,9 @@ export default function Home() {
                     setSelectedISO(iso);
                     setView("day");
 
-                    // set draft date to clicked date (for modal)
                     const d = new Date(iso + "T00:00:00");
                     setBookingDraft((prev) => ({ ...prev, surveyDate: fmtFullDate(d) }));
 
-                    // demo behavior: if has dots -> open details modal
                     if (hasDots) setDetailsOpen(true);
                   }}
                 />
@@ -1400,7 +1372,7 @@ export default function Home() {
         </main>
       </div>
 
-      {/* Modals (KEEP SAME BEHAVIOR) */}
+      {/* Modals */}
       <BookSurveyModal
         open={bookOpen}
         onClose={() => setBookOpen(false)}
@@ -1433,7 +1405,6 @@ function DayView({
 }) {
   return (
     <div className="rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
-      {/* header row */}
       <div className="grid grid-cols-[240px_repeat(8,minmax(110px,1fr))] bg-white">
         <div className="px-5 py-4 text-sm font-semibold text-slate-700 border-b">
           Surveyor Name
@@ -1448,7 +1419,6 @@ function DayView({
         ))}
       </div>
 
-      {/* body rows */}
       {data.length === 0 ? (
         <div className="bg-white p-10 text-center text-slate-500">
           Tiada surveyor ikut filter yang dipilih.
@@ -1563,7 +1533,6 @@ function MonthView({
     const first = new Date(year, month, 1);
     const last = new Date(year, month + 1, 0);
 
-    // Monday-first offset
     const firstDay = first.getDay(); // Sun=0
     const offset = firstDay === 0 ? 6 : firstDay - 1;
 
@@ -1576,7 +1545,6 @@ function MonthView({
       dots?: MonthDot[];
     }[] = [];
 
-    // leading
     for (let i = 0; i < offset; i++) {
       const d = new Date(year, month, 1 - (offset - i));
       const iso = toISODate(d);
@@ -1589,7 +1557,6 @@ function MonthView({
       });
     }
 
-    // current month
     for (let day = 1; day <= last.getDate(); day++) {
       const d = new Date(year, month, day);
       const iso = toISODate(d);
@@ -1601,7 +1568,6 @@ function MonthView({
       });
     }
 
-    // trailing
     while (cells.length < totalCells) {
       const d = new Date(
         year,
@@ -1683,6 +1649,19 @@ function MonthView({
 }
 
 /* ===================== Helpers ===================== */
+
+function pick<T>(arr: readonly T[]) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function generateSlots(times: string[]): Record<string, Status> {
+  const out: Record<string, Status> = {};
+  for (const t of times) {
+    const r = Math.random();
+    out[t] = r < 0.55 ? "available" : r < 0.8 ? "booked" : "unavailable";
+  }
+  return out;
+}
 
 function slotKey(surveyorName: string, time: string) {
   return `${surveyorName}||${time}`;
@@ -1770,10 +1749,18 @@ function fmtShortMonthDay(d: Date) {
 
 function fmtRange(start: Date, end: Date) {
   const s = start.toLocaleString("en-US", { month: "short", day: "numeric" });
-  const e = end.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const e = end.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
   return `${s} - ${e}`;
 }
 
 function fmtFullDate(d: Date) {
-  return d.toLocaleString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return d.toLocaleString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
 }
