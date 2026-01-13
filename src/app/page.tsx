@@ -800,7 +800,7 @@ function CompleteSurveyModal({
         <Field label="Survey Remarks" required>
           <textarea
             className="min-h-[120px] w-full rounded-xl border border-slate-200 p-4 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-fuchsia-200"
-            placeholder="Masukkan survey remarks..."
+            placeholder="Survey remarks"
             value={remarks}
             onChange={(e) => setRemarks(e.target.value)}
           />
@@ -837,7 +837,7 @@ function CompleteSurveyModal({
               </div>
             ) : (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                Upload gambar dulu baru boleh complete.
+                Upload a picture to complete.
               </div>
             )}
           </div>
