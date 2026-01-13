@@ -6,7 +6,7 @@ import axios from "axios";
 /* ===================== Types ===================== */
 
 type View = "day" | "week" | "month";
-type Status = "available" | "booked" | "unavailable";
+type Status = "available" | "booked" | "completed" | "unavailable";
 
 type SurveyorMeta = {
   name: string;
@@ -44,6 +44,8 @@ type BookingDraft = {
   bdRemarks: string;
 };
 
+type BookingStatus = "Confirmed" | "Completed";
+
 type Booking = {
   id: string;
   surveyorName: string;
@@ -55,9 +57,13 @@ type Booking = {
   projectSiteName: string;
   surveyType: string;
   bdRemarks: string;
-  status: "Confirmed";
+  status: BookingStatus;
   customerName: string;
   contactNumber: string;
+
+  // ✅ NEW: completion inputs
+  surveyRemarks?: string;
+  surveyPhotoDataUrl?: string; // store as base64 dataURL (frontend demo)
 };
 
 /* ===================== Constants ===================== */
@@ -397,10 +403,13 @@ function StatusPillDay({
       return { label: "Available", cls: "bg-emerald-100 text-emerald-700" };
     if (status === "booked")
       return { label: "Booked", cls: "bg-rose-100 text-rose-700" };
+    if (status === "completed")
+      return { label: "Completed", cls: "bg-blue-100 text-blue-700" };
     return { label: "Unavailable", cls: "bg-slate-200 text-slate-600" };
   }, [status]);
 
-  const clickable = Boolean(onClick) && status !== "unavailable";
+  const clickable =
+    Boolean(onClick) && status !== "unavailable"; // completed still clickable (view details)
   const Tag = clickable ? "button" : "span";
 
   return (
@@ -486,28 +495,36 @@ function ModalShell({
 
   return (
     <div className="fixed inset-0 z-[60]">
+      {/* ✅ click luar modal terus close */}
       <button
         type="button"
         onClick={onClose}
         className="absolute inset-0 bg-black/40"
         aria-label="Close modal overlay"
       />
-      <div className="relative z-[61] min-h-full flex items-center justify-center p-6">
+
+      {/* mobile: align bottom, modal scroll sendiri */}
+      <div className="relative z-[61] min-h-full flex items-end md:items-center justify-center p-0 md:p-6">
         <div
           className={[
             "w-full",
             widthClass,
-            "rounded-2xl overflow-hidden shadow-2xl bg-white",
+            "rounded-t-2xl md:rounded-2xl overflow-hidden shadow-2xl bg-white",
+            "max-h-[92vh] md:max-h-[calc(100vh-3rem)]",
+            "flex flex-col",
           ].join(" ")}
         >
-          <div className="bg-fuchsia-500 px-6 py-4 flex items-center justify-between">
+          <div className="bg-fuchsia-500 px-6 py-4 flex items-center justify-between shrink-0">
             <div className="text-white font-semibold">{title}</div>
+
             <div className="flex items-center gap-3">
               {headerRight}
+
+              {/* ✅ buang simbol kecil: besarkan X */}
               <button
                 type="button"
                 onClick={onClose}
-                className="text-white/90 hover:text-white text-xl leading-none"
+                className="text-white/90 hover:text-white text-3xl leading-none px-2 -mr-2"
                 aria-label="Close"
               >
                 ×
@@ -515,11 +532,11 @@ function ModalShell({
             </div>
           </div>
 
-          <div className="p-6">{children}</div>
+          <div className="p-6 overflow-y-auto flex-1">{children}</div>
 
           {footer ? (
-            <div className="px-6 pb-6">
-              <div className="border-t pt-4 flex items-center justify-end gap-3">
+            <div className="px-6 pb-6 bg-white shrink-0">
+              <div className="border-t pt-4 flex items-center justify-end gap-3 flex-wrap">
                 {footer}
               </div>
             </div>
@@ -697,20 +714,157 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
+/* ✅ NEW: Complete modal (remarks + image required) */
+function CompleteSurveyModal({
+  open,
+  onClose,
+  booking,
+  remarks,
+  setRemarks,
+  photoDataUrl,
+  setPhotoDataUrl,
+  onConfirm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  booking: Booking | null;
+  remarks: string;
+  setRemarks: (v: string) => void;
+  photoDataUrl: string;
+  setPhotoDataUrl: (v: string) => void;
+  onConfirm: () => void;
+}) {
+  if (!open || !booking) return null;
+
+  const canConfirm =
+    remarks.trim().length > 0 && Boolean(photoDataUrl) && booking.status !== "Completed";
+
+  const onPickFile = async (file: File | null) => {
+    if (!file) {
+      setPhotoDataUrl("");
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      setPhotoDataUrl("");
+      return;
+    }
+    const dataUrl = await fileToDataUrl(file);
+    setPhotoDataUrl(dataUrl);
+  };
+
+  return (
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      title="Complete Survey"
+      widthClass="max-w-[720px]"
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-11 px-6 rounded-xl border border-slate-200 bg-white text-sm font-semibold hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!canConfirm}
+            className={[
+              "h-11 px-6 rounded-xl text-sm font-semibold",
+              canConfirm
+                ? "bg-fuchsia-500 text-white hover:opacity-95"
+                : "bg-slate-200 text-slate-500 cursor-not-allowed",
+            ].join(" ")}
+          >
+            Confirm Complete
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="font-semibold text-slate-900">
+            {booking.surveyorName} • {booking.surveyDate}
+          </div>
+          <div className="text-sm text-slate-600 mt-1">
+            {booking.startTime} - {booking.endTime} • {booking.region} • {booking.state}
+          </div>
+          <div className="text-sm text-slate-700 mt-2">
+            <span className="font-semibold">Project:</span> {booking.projectSiteName}
+          </div>
+        </div>
+
+        <Field label="Survey Remarks" required>
+          <textarea
+            className="min-h-[120px] w-full rounded-xl border border-slate-200 p-4 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-fuchsia-200"
+            placeholder="Masukkan survey remarks..."
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+          />
+        </Field>
+
+        <Field label="Upload Survey Photo" required>
+          <div className="space-y-3">
+            <input
+              type="file"
+              accept="image/*"
+              className="block w-full text-sm text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-slate-900 file:px-5 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:opacity-95"
+              onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+            />
+
+            {photoDataUrl ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                <div className="text-sm font-semibold text-slate-700 mb-2">
+                  Preview
+                </div>
+                <img
+                  src={photoDataUrl}
+                  alt="Survey upload preview"
+                  className="w-full max-h-[360px] object-contain rounded-xl bg-slate-50"
+                />
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setPhotoDataUrl("")}
+                    className="h-10 px-5 rounded-xl border border-slate-200 bg-white text-sm font-semibold hover:bg-slate-50"
+                  >
+                    Remove Photo
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                Upload gambar dulu baru boleh complete.
+              </div>
+            )}
+          </div>
+        </Field>
+      </div>
+    </ModalShell>
+  );
+}
+
 function SurveyDetailsModal({
   open,
   onClose,
   booking,
   onCancel,
   onReschedule,
+  onComplete, // ✅ now opens "CompleteSurveyModal"
 }: {
   open: boolean;
   onClose: () => void;
   booking: Booking | null;
   onCancel: () => void;
   onReschedule: () => void;
+  onComplete: () => void;
 }) {
   if (!open || !booking) return null;
+
+  const isCompleted = booking.status === "Completed";
 
   return (
     <ModalShell
@@ -729,40 +883,61 @@ function SurveyDetailsModal({
         </div>
       }
       footer={
-        <>
+        <div className="w-full flex items-center justify-between gap-3 flex-wrap">
+          {/* left */}
           <button
             type="button"
             onClick={onCancel}
-            className="h-11 px-6 rounded-xl border border-rose-300 bg-white text-rose-600 text-sm font-semibold hover:bg-rose-50"
+            disabled={isCompleted}
+            className={[
+              "h-11 px-6 rounded-xl border text-sm font-semibold",
+              isCompleted
+                ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
+                : "border-rose-300 bg-white text-rose-600 hover:bg-rose-50",
+            ].join(" ")}
           >
             Cancel Survey
           </button>
 
-          <button
-            type="button"
-            onClick={onReschedule}
-            className="h-11 px-6 rounded-xl bg-fuchsia-500 text-white text-sm font-semibold hover:opacity-95"
-          >
-            Reschedule Survey
-          </button>
+          {/* right (rapat kanan) */}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onReschedule}
+              disabled={isCompleted}
+              className={[
+                "h-11 px-6 rounded-xl text-sm font-semibold",
+                isCompleted
+                  ? "bg-slate-200 text-slate-500 cursor-not-allowed"
+                  : "bg-amber-400 text-amber-900 hover:bg-amber-500",
+              ].join(" ")}
+            >
+              Reschedule Survey
+            </button>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-11 px-6 rounded-xl border border-slate-200 bg-white text-sm font-semibold hover:bg-slate-50"
-          >
-            Close
-          </button>
-        </>
+            {/* ✅ COMPLETE now opens form modal */}
+            <button
+              type="button"
+              onClick={onComplete}
+              disabled={isCompleted}
+              className={[
+                "h-11 px-6 rounded-xl text-sm font-semibold",
+                isCompleted
+                  ? "bg-slate-200 text-slate-500 cursor-not-allowed"
+                  : "bg-fuchsia-500 text-white hover:opacity-95",
+              ].join(" ")}
+            >
+              Complete
+            </button>
+          </div>
+        </div>
       }
     >
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-4">
             <div className="h-14 w-14 rounded-full bg-white border overflow-hidden flex items-center justify-center font-bold text-slate-700">
-              {booking.surveyorName
-                ? initials(booking.surveyorName)
-                : "SC"}
+              {booking.surveyorName ? initials(booking.surveyorName) : "SC"}
             </div>
             <div>
               <div className="font-semibold text-slate-900">
@@ -772,24 +947,103 @@ function SurveyDetailsModal({
             </div>
           </div>
 
-          <span className="inline-flex h-8 items-center rounded-full bg-emerald-100 text-emerald-700 px-4 text-xs font-semibold">
+          <span
+            className={[
+              "inline-flex h-8 items-center rounded-full px-4 text-xs font-semibold",
+              booking.status === "Confirmed"
+                ? "bg-emerald-100 text-emerald-700"
+                : "bg-blue-100 text-blue-700",
+            ].join(" ")}
+          >
             {booking.status}
           </span>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-6">
-          <Detail
-            label="Region & State"
-            value={`${booking.region} • ${booking.state}`}
-          />
+        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Detail label="Region & State" value={`${booking.region} • ${booking.state}`} />
           <Detail label="Customer Name" value={booking.customerName} />
           <Detail label="Project / Site Name" value={booking.projectSiteName} />
           <Detail label="Contact Number" value={booking.contactNumber} />
           <Detail label="Survey Type" value={booking.surveyType} />
           <Detail label="BD Remarks" value={booking.bdRemarks || "-"} />
+
+          {/* ✅ show completion data (if exists) */}
+          <Detail label="Survey Remarks" value={booking.surveyRemarks?.trim() ? booking.surveyRemarks : "-"} />
         </div>
+
+        {booking.surveyPhotoDataUrl ? (
+          <div className="mt-5">
+            <div className="text-xs font-semibold text-slate-500">Survey Photo</div>
+            <div className="mt-2 rounded-2xl border border-slate-200 bg-white p-3">
+              <img
+                src={booking.surveyPhotoDataUrl}
+                alt="Survey proof"
+                className="w-full max-h-[420px] object-contain rounded-xl bg-slate-50"
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {isCompleted ? (
+          <div className="mt-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+            This survey has been completed and can no longer be edited.
+          </div>
+        ) : null}
       </div>
     </ModalShell>
+  );
+}
+
+/* ===================== Success Popup ===================== */
+
+function SuccessToast({
+  open,
+  text,
+  onClose,
+}: {
+  open: boolean;
+  text: string;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-6">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/30"
+        onClick={onClose}
+        aria-label="Close success overlay"
+      />
+      <div className="relative bg-white rounded-2xl shadow-2xl border p-6 w-full max-w-[420px]">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center">
+            <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none">
+              <path
+                d="M20 6L9 17l-5-5"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+          <div>
+            <div className="font-semibold text-slate-900">Success</div>
+            <div className="text-sm text-slate-600">{text}</div>
+          </div>
+        </div>
+
+        <div className="mt-5 flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-10 px-5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:opacity-95"
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -805,6 +1059,9 @@ type RandomUserResponse = {
 export default function Home() {
   const [view, setView] = useState<View>("day");
 
+  // MOBILE: sidebar drawer
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   // Loading API data
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -816,10 +1073,7 @@ export default function Home() {
   // Day navigation
   const [dayOffset, setDayOffset] = useState(0);
   const BASE_DAY = useMemo(() => new Date(), []);
-  const dayCursor = useMemo(
-    () => addDays(BASE_DAY, dayOffset),
-    [BASE_DAY, dayOffset]
-  );
+  const dayCursor = useMemo(() => addDays(BASE_DAY, dayOffset), [BASE_DAY, dayOffset]);
   const dayTitle = useMemo(
     () =>
       dayCursor.toLocaleString("en-US", {
@@ -844,15 +1098,11 @@ export default function Home() {
   );
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
 
-  const monthCursor = useMemo(
-    () => addMonths(BASE_MONTH, monthOffset),
-    [BASE_MONTH, monthOffset]
-  );
+  const monthCursor = useMemo(() => addMonths(BASE_MONTH, monthOffset), [BASE_MONTH, monthOffset]);
   const monthTitle = useMemo(() => fmtMonthTitle(monthCursor), [monthCursor]);
 
   const dotsMap = useMemo(() => {
-    const isDec2024 =
-      monthCursor.getFullYear() === 2024 && monthCursor.getMonth() === 11;
+    const isDec2024 = monthCursor.getFullYear() === 2024 && monthCursor.getMonth() === 11;
     return isDec2024 ? DOTS_DEC_2024 : {};
   }, [monthCursor]);
 
@@ -881,8 +1131,7 @@ export default function Home() {
   const stateOptions = useMemo(() => {
     const region = filterDraft.region;
     if (region === "All Regions") return Array.from(MALAYSIA_STATES);
-    if (region === "Central")
-      return ["Selangor", "Kuala Lumpur", "Putrajaya", "Negeri Sembilan"];
+    if (region === "Central") return ["Selangor", "Kuala Lumpur", "Putrajaya", "Negeri Sembilan"];
     if (region === "Northern") return ["Pulau Pinang", "Perak", "Kedah", "Perlis"];
     if (region === "Southern") return ["Johor", "Melaka"];
     if (region === "East Coast") return ["Kelantan", "Terengganu", "Pahang"];
@@ -919,15 +1168,14 @@ export default function Home() {
 
       if (status !== "All Status") {
         const wanted =
-          status === "Available"
-            ? "available"
-            : status === "Booked"
-            ? "booked"
-            : "unavailable";
+          status === "Available" ? "available" : status === "Booked" ? "booked" : "unavailable";
 
-        const anyMatch = DAY_TIMES.some(
-          (t) => (row.slots[t] ?? "unavailable") === wanted
-        );
+        const anyMatch = DAY_TIMES.some((t) => {
+          const st = (row.slots[t] ?? "unavailable") as Status;
+          if (wanted === "booked") return st === "booked" || st === "completed";
+          return st === wanted;
+        });
+
         if (!anyMatch) return false;
       }
 
@@ -939,6 +1187,11 @@ export default function Home() {
   const [bookOpen, setBookOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selected, setSelected] = useState<{ surveyorName: string; time: string } | null>(null);
+
+  // ✅ NEW: complete form modal state
+  const [completeOpen, setCompleteOpen] = useState(false);
+  const [completeRemarks, setCompleteRemarks] = useState("");
+  const [completePhoto, setCompletePhoto] = useState("");
 
   const [bookingDraft, setBookingDraft] = useState<BookingDraft>({
     projectSiteName: "",
@@ -956,6 +1209,20 @@ export default function Home() {
     return bookings[slotKey(selected.surveyorName, selected.time)] ?? null;
   }, [bookings, selected]);
 
+  // Success popup
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [successText, setSuccessText] = useState("Completed successfully.");
+
+  // ✅ Prevent background scroll when modal/sidebar open
+  useEffect(() => {
+    const shouldLock = sidebarOpen || bookOpen || detailsOpen || successOpen || completeOpen;
+    const prev = document.body.style.overflow;
+    if (shouldLock) document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [sidebarOpen, bookOpen, detailsOpen, successOpen, completeOpen]);
+
   /* ===================== FETCH API (AXIOS) ===================== */
   useEffect(() => {
     let mounted = true;
@@ -965,10 +1232,7 @@ export default function Home() {
         setLoading(true);
         setApiError(null);
 
-        const res = await axios.get<RandomUserResponse>(
-          "https://randomuser.me/api/?results=6"
-        );
-
+        const res = await axios.get<RandomUserResponse>("https://randomuser.me/api/?results=6");
         if (!mounted) return;
 
         const mappedSurveyors: SurveyorMeta[] = res.data.results.map((u) => ({
@@ -983,7 +1247,6 @@ export default function Home() {
           slots: generateSlots(DAY_TIMES),
         }));
 
-        // Seed bookings for any booked slots so "Booked" click shows details
         const seededBookings: Record<string, Booking> = {};
         for (const row of mappedDay) {
           for (const t of DAY_TIMES) {
@@ -1074,9 +1337,7 @@ export default function Home() {
 
     setDayData((prev) =>
       prev.map((r) =>
-        r.name !== selected.surveyorName
-          ? r
-          : { ...r, slots: { ...r.slots, [start]: "booked" } }
+        r.name !== selected.surveyorName ? r : { ...r, slots: { ...r.slots, [start]: "booked" } }
       )
     );
 
@@ -1093,6 +1354,8 @@ export default function Home() {
     if (!selected) return;
 
     const k = slotKey(selected.surveyorName, selected.time);
+    const existing = bookings[k];
+    if (existing?.status === "Completed") return;
 
     setDayData((prev) =>
       prev.map((r) =>
@@ -1111,43 +1374,78 @@ export default function Home() {
     setDetailsOpen(false);
   };
 
+  // ✅ reschedule: buka balik Book Survey form tapi prefill data yang pernah isi
   const rescheduleSurvey = () => {
     if (!selected) return;
-    const sel = selected;
-
-    const existing = bookings[slotKey(sel.surveyorName, sel.time)];
+    const k = slotKey(selected.surveyorName, selected.time);
+    const existing = bookings[k];
     if (!existing) return;
+    if (existing.status === "Completed") return;
 
-    const nextTime = findNextAvailableTime(dayData, sel.surveyorName, sel.time);
-    if (!nextTime) {
-      setDetailsOpen(false);
-      return;
-    }
+    setBookingDraft({
+      projectSiteName: existing.projectSiteName,
+      surveyType: existing.surveyType,
+      bdRemarks: existing.bdRemarks,
+      surveyorName: existing.surveyorName,
+      region: existing.region,
+      state: existing.state,
+      surveyDate: existing.surveyDate,
+      timeSlot: `${existing.startTime} - ${existing.endTime}`,
+    });
+
+    setDetailsOpen(false);
+    setBookOpen(true);
+  };
+
+  // ✅ NEW: when click Complete in details, open form (remarks + image)
+  const openCompleteForm = () => {
+    if (!selected) return;
+    const k = slotKey(selected.surveyorName, selected.time);
+    const existing = bookings[k];
+    if (!existing) return;
+    if (existing.status === "Completed") return;
+
+    setCompleteRemarks(existing.surveyRemarks ?? "");
+    setCompletePhoto(existing.surveyPhotoDataUrl ?? "");
+    setCompleteOpen(true);
+  };
+
+  // ✅ NEW: confirm complete (requires remarks + image)
+  const confirmComplete = () => {
+    if (!selected) return;
+    const k = slotKey(selected.surveyorName, selected.time);
+    const existing = bookings[k];
+    if (!existing) return;
+    if (existing.status === "Completed") return;
+
+    if (!completeRemarks.trim() || !completePhoto) return;
+
+    setBookings((prev) => ({
+      ...prev,
+      [k]: {
+        ...prev[k],
+        status: "Completed",
+        surveyRemarks: completeRemarks.trim(),
+        surveyPhotoDataUrl: completePhoto,
+      },
+    }));
 
     setDayData((prev) =>
       prev.map((r) => {
-        if (r.name !== sel.surveyorName) return r;
-        const newSlots = {
-          ...r.slots,
-          [sel.time]: "available" as Status,
-          [nextTime]: "booked" as Status,
-        };
-        return { ...r, slots: newSlots };
+        if (r.name !== selected.surveyorName) return r;
+        return { ...r, slots: { ...r.slots, [selected.time]: "completed" } };
       })
     );
 
-    setBookings((prev) => {
-      const copy = { ...prev };
-      delete copy[slotKey(sel.surveyorName, sel.time)];
-      copy[slotKey(sel.surveyorName, nextTime)] = {
-        ...existing,
-        startTime: nextTime,
-        endTime: nextHour(nextTime),
-      };
-      return copy;
-    });
+    setCompleteOpen(false);
+    setDetailsOpen(true); // ✅ show updated details (remarks + photo)
 
-    setSelected({ surveyorName: sel.surveyorName, time: nextTime });
+    setSuccessText("Survey marked as Completed.");
+    setSuccessOpen(true);
+
+    window.setTimeout(() => {
+      setSuccessOpen(false);
+    }, 1200);
   };
 
   const goToday = () => {
@@ -1157,22 +1455,73 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 overflow-x-hidden">
       {/* Top bar */}
-      <div className="h-16 bg-gradient-to-r from-fuchsia-500 to-pink-500 flex items-center justify-between px-7">
-        <div className="text-white text-xl font-semibold">Survey Calendar</div>
+      <div className="h-16 bg-gradient-to-r from-fuchsia-500 to-pink-500 flex items-center justify-between px-4 md:px-7">
+        <div className="flex items-center gap-3">
+          {/* Mobile hamburger */}
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            className="md:hidden h-10 w-10 rounded-xl bg-white/15 hover:bg-white/20 ring-1 ring-white/25 flex items-center justify-center"
+            aria-label="Open sidebar"
+          >
+            <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none">
+              <path
+                d="M4 6h16M4 12h16M4 18h16"
+                stroke="white"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+
+          <div className="text-white text-lg md:text-xl font-semibold">Survey Calendar</div>
+        </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-white font-semibold">Sarah Mitchell</span>
+          <span className="text-white font-semibold hidden sm:inline">Sarah Mitchell</span>
           <div className="h-10 w-10 rounded-full bg-white/20 ring-2 ring-white/70 overflow-hidden flex items-center justify-center">
             <span className="text-white font-bold">SM</span>
           </div>
         </div>
       </div>
 
-      <div className="flex">
-        {/* Sidebar */}
-        <aside className="w-[300px] bg-white border-r min-h-[calc(100vh-64px)]">
+      {/* Mobile sidebar drawer */}
+      {sidebarOpen ? (
+        <div className="fixed inset-0 z-[70] md:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close sidebar overlay"
+          />
+          <aside className="absolute left-0 top-0 h-full w-[82vw] max-w-[320px] bg-white shadow-2xl border-r">
+            <div className="h-16 bg-gradient-to-r from-fuchsia-500 to-pink-500 flex items-center justify-between px-5">
+              <div className="text-white font-semibold">Menu</div>
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                className="text-white/90 hover:text-white text-3xl leading-none px-2 -mr-2"
+                aria-label="Close sidebar"
+              >
+                ×
+              </button>
+            </div>
+            <div className="py-6">
+              <NavItem icon="dashboard" label="Dashboard" />
+              <NavItem active icon="calendar" label="Survey Calendar" />
+              <NavItem icon="users" label="Surveyors" />
+              <NavItem icon="billing" label="Billing" />
+              <NavItem icon="settings" label="Settings" />
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
+      <div className="flex w-full">
+        {/* Sidebar (desktop only) */}
+        <aside className="hidden md:block w-[300px] bg-white border-r min-h-[calc(100vh-64px)]">
           <div className="py-6">
             <NavItem icon="dashboard" label="Dashboard" />
             <NavItem active icon="calendar" label="Survey Calendar" />
@@ -1183,10 +1532,10 @@ export default function Home() {
         </aside>
 
         {/* Main */}
-        <main className="flex-1 p-8">
+        <main className="flex-1 p-4 md:p-8 min-w-0">
           <div className="bg-white rounded-2xl shadow-sm border">
             {/* Filter row */}
-            <div className="p-6 flex items-center justify-between gap-6">
+            <div className="p-4 md:p-6 flex items-start md:items-center justify-between gap-6 flex-col lg:flex-row">
               <div className="flex items-center gap-4 flex-wrap">
                 <select
                   className="h-11 rounded-xl border border-slate-200 px-5 text-sm bg-white"
@@ -1236,7 +1585,7 @@ export default function Home() {
                 </select>
 
                 <input
-                  className="h-11 w-[240px] rounded-xl border border-slate-200 px-5 text-sm bg-white text-slate-800 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-fuchsia-200"
+                  className="h-11 w-[240px] max-w-[80vw] rounded-xl border border-slate-200 px-5 text-sm bg-white text-slate-800 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-fuchsia-200"
                   placeholder="Surveyor name..."
                   value={filterDraft.surveyor}
                   onChange={(e) =>
@@ -1261,7 +1610,7 @@ export default function Home() {
                 </button>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 w-full lg:w-auto justify-end">
                 <button
                   type="button"
                   onClick={goToday}
@@ -1283,7 +1632,7 @@ export default function Home() {
             <div className="border-t" />
 
             {/* Tabs + right controls */}
-            <div className="px-6 py-5 flex items-center justify-between">
+            <div className="px-4 md:px-6 py-5 flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
               <SegmentedTabs value={view} onChange={setView} />
 
               {view === "day" ? (
@@ -1293,7 +1642,9 @@ export default function Home() {
                     label="Previous day"
                     onClick={() => setDayOffset((v) => v - 1)}
                   />
-                  <div className="text-slate-800 font-semibold">{dayTitle}</div>
+                  <div className="text-slate-800 font-semibold text-sm md:text-base">
+                    {dayTitle}
+                  </div>
                   <ArrowBtn
                     dir="right"
                     label="Next day"
@@ -1307,7 +1658,7 @@ export default function Home() {
                     label="Previous week"
                     onClick={() => setWeekOffset((v) => v - 1)}
                   />
-                  <div className="text-slate-800 font-semibold">
+                  <div className="text-slate-800 font-semibold text-sm md:text-base">
                     {fmtRange(weekStart, weekEnd)}
                   </div>
                   <ArrowBtn
@@ -1323,7 +1674,9 @@ export default function Home() {
                     label="Previous month"
                     onClick={() => setMonthOffset((v) => v - 1)}
                   />
-                  <div className="text-slate-800 font-semibold">{monthTitle}</div>
+                  <div className="text-slate-800 font-semibold text-sm md:text-base">
+                    {monthTitle}
+                  </div>
                   <ArrowBtn
                     dir="right"
                     label="Next month"
@@ -1336,34 +1689,51 @@ export default function Home() {
             <div className="border-t" />
 
             {/* Content */}
-            <div className="px-6 pb-6 pt-5">
+            <div className="px-4 md:px-6 pb-6 pt-5">
               {loading ? (
                 <div className="p-10 text-slate-500">Loading data from API...</div>
               ) : apiError ? (
                 <div className="p-10 text-rose-600">Error: {apiError}</div>
               ) : view === "day" ? (
-                <DayView
-                  data={filteredRows}
-                  onClickAvailable={(surveyorName, time) => openBook(surveyorName, time)}
-                  onClickBooked={(surveyorName, time) => openDetails(surveyorName, time)}
-                />
+                <div className="overflow-x-auto -mx-4 md:mx-0 px-4 md:px-0">
+                  <div className="min-w-[980px]">
+                    <DayView
+                      data={filteredRows}
+                      onClickAvailable={(surveyorName, time) =>
+                        openBook(surveyorName, time)
+                      }
+                      onClickBooked={(surveyorName, time) =>
+                        openDetails(surveyorName, time)
+                      }
+                    />
+                  </div>
+                </div>
               ) : view === "week" ? (
-                <WeekView weekDays={weekDays} />
+                <div className="overflow-x-auto -mx-4 md:mx-0 px-4 md:px-0">
+                  <div className="min-w-[1100px]">
+                    <WeekView weekDays={weekDays} />
+                  </div>
+                </div>
               ) : (
-                <MonthView
-                  monthCursor={monthCursor}
-                  selectedISO={selectedISO}
-                  dotsMap={dotsMap}
-                  onPickDate={(iso, hasDots) => {
-                    setSelectedISO(iso);
-                    setView("day");
-
-                    const d = new Date(iso + "T00:00:00");
-                    setBookingDraft((prev) => ({ ...prev, surveyDate: fmtFullDate(d) }));
-
-                    if (hasDots) setDetailsOpen(true);
-                  }}
-                />
+                <div className="overflow-x-auto -mx-4 md:mx-0 px-4 md:px-0">
+                  <div className="min-w-[860px]">
+                    <MonthView
+                      monthCursor={monthCursor}
+                      selectedISO={selectedISO}
+                      dotsMap={dotsMap}
+                      onPickDate={(iso, hasDots) => {
+                        setSelectedISO(iso);
+                        setView("day");
+                        const d = new Date(iso + "T00:00:00");
+                        setBookingDraft((prev) => ({
+                          ...prev,
+                          surveyDate: fmtFullDate(d),
+                        }));
+                        if (hasDots) setDetailsOpen(true);
+                      }}
+                    />
+                  </div>
+                </div>
               )}
 
               <div className="h-6" />
@@ -1387,6 +1757,25 @@ export default function Home() {
         booking={currentBooking}
         onCancel={cancelSurvey}
         onReschedule={rescheduleSurvey}
+        onComplete={openCompleteForm} // ✅ open the completion form
+      />
+
+      {/* ✅ NEW: Completion Form Modal */}
+      <CompleteSurveyModal
+        open={completeOpen}
+        onClose={() => setCompleteOpen(false)}
+        booking={currentBooking}
+        remarks={completeRemarks}
+        setRemarks={setCompleteRemarks}
+        photoDataUrl={completePhoto}
+        setPhotoDataUrl={setCompletePhoto}
+        onConfirm={confirmComplete}
+      />
+
+      <SuccessToast
+        open={successOpen}
+        text={successText}
+        onClose={() => setSuccessOpen(false)}
       />
     </div>
   );
@@ -1434,7 +1823,7 @@ function DayView({
             </div>
 
             {DAY_TIMES.map((t) => {
-              const st = row.slots[t] ?? "unavailable";
+              const st = (row.slots[t] ?? "unavailable") as Status;
               return (
                 <div
                   key={t}
@@ -1445,7 +1834,7 @@ function DayView({
                     onClick={
                       st === "available"
                         ? () => onClickAvailable(row.name, t)
-                        : st === "booked"
+                        : st === "booked" || st === "completed"
                         ? () => onClickBooked(row.name, t)
                         : undefined
                     }
@@ -1692,31 +2081,10 @@ function initials(name: string) {
 function cryptoSafeId() {
   try {
     // @ts-ignore
-    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+    if (typeof crypto !== "undefined" && crypto.randomUUID)
+      return crypto.randomUUID();
   } catch {}
   return `id_${Math.random().toString(16).slice(2)}_${Date.now()}`;
-}
-
-function findNextAvailableTime(
-  dayData: DayRow[],
-  surveyorName: string,
-  currentTime: string
-) {
-  const row = dayData.find((r) => r.name === surveyorName);
-  if (!row) return null;
-
-  const startIdx = DAY_TIMES.indexOf(currentTime);
-  if (startIdx < 0) return null;
-
-  for (let i = startIdx + 1; i < DAY_TIMES.length; i++) {
-    const t = DAY_TIMES[i];
-    if ((row.slots[t] ?? "unavailable") === "available") return t;
-  }
-  for (let i = 0; i < startIdx; i++) {
-    const t = DAY_TIMES[i];
-    if ((row.slots[t] ?? "unavailable") === "available") return t;
-  }
-  return null;
 }
 
 function addDays(d: Date, days: number) {
@@ -1762,5 +2130,15 @@ function fmtFullDate(d: Date) {
     month: "long",
     day: "numeric",
     year: "numeric",
+  });
+}
+
+// ✅ NEW: file -> base64 dataURL
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
   });
 }
